@@ -1,0 +1,689 @@
+{
+  "name": "AI Jira project manager: AI | Bot Telegram | n8n",
+  "nodes": [
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "sessione-stage-v1"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        400,
+        -992
+      ],
+      "id": "1c3d912e-992f-423a-9289-8cf900065061",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -208,
+        -1232
+      ],
+      "id": "441dd935-120b-407c-b084-456f16a342f4",
+      "name": "Trigger: Every 5 Seconds"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/YOUR_TELEGRAM_TOKEN",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        16,
+        -1232
+      ],
+      "id": "ddb80e50-8fa7-4de2-a02c-a2c005c902de",
+      "name": "Telegram: Get New Messages"
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        224,
+        -976
+      ],
+      "id": "856ae56b-ff98-46ed-a740-0ea36df94948",
+      "name": "AI: Natural Language Interpreter",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "4agUUxgfUzDXqOxK",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.output;\nconst match = text.match(/\\{[\\s\\S]*\\}/);\n\nif (match) {\n  try {\n    const data = JSON.parse(match[0]);\n    return {\n      action: data.action,\n      payload: data.payload\n    };\n  } catch (e) {\n    return { action: \"CLARIFY\", payload: { text: \"Errore nel parsing JSON dell'AI.\" } };\n  }\n}\nreturn { action: \"CLARIFY\", payload: { text: \"Nessun comando riconosciuto.\" } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -1456
+      ],
+      "id": "b2a6326e-69f3-4b60-b38e-07c2548ffc39",
+      "name": "Parser: Clean AI Output"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "{{ $json.action }}",
+                    "rightValue": "CREATE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "86cce7ac-7663-4fe0-8da9-21dc5eb88582"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "eff96a6c-4d2c-4114-96b2-9233c05569aa",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "UPDATE_STATUS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "562e6c1b-40e1-4215-b45d-d060faef9273",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "LIST",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        800,
+        -1744
+      ],
+      "id": "ba9868be-3cb0-4431-9d53-2688a74b367e",
+      "name": "Router: Task Actions"
+    },
+    {
+      "parameters": {
+        "project": {
+          "__rl": true,
+          "value": "10000",
+          "mode": "list",
+          "cachedResultName": "YOUR_PROJECT_NAME"
+        },
+        "issueType": {
+          "__rl": true,
+          "value": "10001",
+          "mode": "list",
+          "cachedResultName": "Task"
+        },
+        "summary": "={{ $json.payload.summary }}",
+        "additionalFields": {
+          "description": "={{ $json.payload.description }}"
+        }
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        976,
+        -1888
+      ],
+      "id": "ae5f2007-dc2b-4fcd-a323-fbc6c3c09c6e",
+      "name": "Jira: Create New Issue",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "gxsHGpRO1L3vfMHk",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "transitions",
+        "issueKey": "={{ $json.payload.issue_id }}",
+        "additionalFields": {
+          "transitionId": "={{ $json.payload.new_status }}"
+        }
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        976,
+        -1584
+      ],
+      "id": "b594651e-9bb9-4626-9d0d-6583941d6130",
+      "name": "Jira: Transition Issue Status",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "gxsHGpRO1L3vfMHk",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "jql": "=project = \"YOUR_PROJECT_NAME\" AND assignee = currentUser() AND status != Done ORDER BY status ASC"
+        }
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        1152,
+        -1696
+      ],
+      "id": "8b9929b0-ed08-42ed-96f4-649fd2a17be8",
+      "name": "Jira: Fetch Active Tasks",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "gxsHGpRO1L3vfMHk",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Test Task AI",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Foglio1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.format('dd/MM/yyyy HH:mm') }}",
+            "Action": "={{ $json.action }}",
+            "Title": "={{ $json.payload.summary || $json.payload.issue_id }}",
+            "Description": "={{ $json.payload.description || 'N/A' }}",
+            "Status": "={{ $json.payload.new_status || 'N/A' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Action",
+              "displayName": "Action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Description",
+              "displayName": "Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        976,
+        -1296
+      ],
+      "id": "a683ff8b-fd32-4040-824e-24127e720611",
+      "name": "Sheets: Log Activity History",
+      "credentials": {
+        "googleApi": {
+          "id": "NZ0IEaGr5zDnAWn6",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const issues = items; \nlet todo = \"\";\nlet wip = \"\";\n\n// Controlliamo se la lista dei task è vuota\nif (!issues || issues.length === 0) {\n  return { \n    message: \"📭 **Nessun task trovato!**\\n\\nNon ci sono task assegnati a tuo nome al momento. Ottimo lavoro, sei in pari con tutto! ✨\" \n  };\n}\n\nissues.forEach(item => {\n  const task = item.json;\n  const summary = task.fields.summary;\n  const id = task.key;\n  const status = task.fields.status.name;\n\n  const line = `• ${summary}. ID: ${id}\\n`;\n  \n  if (status === \"To Do\") todo += line;\n  else if (status === \"In Progress\") wip += line;\n});\n\n// Messaggio finale se ci sono task\nconst finalMessage = `🚀 **PROJECT TASK LIST**\\n\\n` +\n                     `📝 **TO DO:**\\n${todo || \"_Nessun task in attesa_\"}\\n\\n` +\n                     `🚧 **IN PROGRESS:**\\n${wip || \"_Nessun lavoro in corso_\"}`;\n\nreturn { message: finalMessage };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        -1696
+      ],
+      "id": "5ea54058-6bc6-4968-9b76-019e4f697e68",
+      "name": "Formatter: Telegram Message Builder"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram: Get New Messages').item.json.result[0].message.from.id }}",
+        "text": "=🛠 **AI Debug:** Il comando è stato elaborato come: {{ $json.output }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        976,
+        -976
+      ],
+      "id": "c0b4cd68-d341-4d61-8c40-a379a146d422",
+      "name": "Telegram: Notify User (Raw Output)1",
+      "webhookId": "f668d863-ff8b-4f06-ab82-b4e2d6860e69",
+      "credentials": {
+        "telegramApi": {
+          "id": "WfnkKuestKlyqoYH",
+          "name": "Telegram account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram: Get New Messages').item.json.result[0].message.from.id }}",
+        "text": "={{ $json.message }}",
+        "replyMarkup": "=none",
+        "forceReply": {},
+        "replyKeyboardOptions": {},
+        "replyKeyboardRemove": {},
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1504,
+        -1392
+      ],
+      "id": "6e632667-5e97-4ce4-affd-9998e573bf7a",
+      "name": "Telegram: Push Task List",
+      "webhookId": "0e0c52e7-59af-4c27-b6be-b61904c713cd",
+      "credentials": {
+        "telegramApi": {
+          "id": "WfnkKuestKlyqoYH",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $node[\"Telegram: Get New Messages\"].json.result[0].message.text }}",
+        "options": {
+          "systemMessage": "### ROLE\nSei un Senior Project Assistant AI specializzato nella gestione di Jira Cloud per il progetto \"YOUR_PROJECT_NAME\". Il tuo compito è tradurre input in linguaggio naturale (Italiano) in comandi tecnici strutturati (Inglese).\n\n### TRANSLATION RULES\n- INPUT: Italiano (informale o tecnico).\n- OUTPUT FIELDS (summary, description): DEVI tradurli in Inglese tecnico, professionale e conciso.\n- OUTPUT FORMAT: Restituisci SEMPRE e SOLO un oggetto JSON valido. Niente testo prima o dopo.\n\n### LOGIC & MAPPING\n1. @crea: [testo] -> action: CREATE. Traduci [testo] in 'summary' (titolo) e 'description' (dettagli).\n2. @aggiorna: [ID]: [stato] -> action: UPDATE_STATUS. Mappa gli stati:\n   - \"da fare\" / \"todo\" -> \"To Do\"\n   - \"in corso\" / \"lavorando\" -> \"In Progress\"\n   - \"concluso\" / \"fatto\" -> \"Done\"\n3. @lista -> action: LIST.\n\n### SELF-CORRECTION STEP (Verifica prima di rispondere)\nPrima di generare il JSON, esegui mentalmente questo controllo:\n- Il testo è stato tradotto correttamente in inglese?\n- Lo stato (se presente) corrisponde esattamente a \"To Do\", \"In Progress\" o \"Done\"?\n- Il JSON è ben formato (virgolette, virgole, parentesi)?\n- Se mancano dati critici, imposta action: \"CLARIFY\".\n\n### JSON STRUCTURE\n{\n  \"action\": \"CREATE | UPDATE_STATUS | LIST | CLARIFY\",\n  \"payload\": {\n    \"summary\": \"English title\",\n    \"description\": \"English detailed description\",\n    \"issue_id\": \"CORE-XXX\",\n    \"new_status\": \"To Do | In Progress | Done\"\n  }\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        352,
+        -1232
+      ],
+      "id": "15f87809-dbfe-41fd-a960-72b918bc3fcc",
+      "name": "Agent: Jira Task Manager"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/YOUR_TELEGRAM_TOKEN/getUpdates?offset={{ $('Telegram: Get New Messages').item.json.result[0].update_id + 1 }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1712,
+        -1136
+      ],
+      "id": "770d91cc-cf91-4db8-ae57-e645919d6e73",
+      "name": "Telegram: Clear Message Queue"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0f385ab3-0a2d-4406-b649-cbd5316cda91",
+              "leftValue": "={{ $json.result.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        192,
+        -1232
+      ],
+      "id": "733e78d6-28de-481b-a537-c8e52a9d9836",
+      "name": "Gateway: Ignore Empty Polls"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Agent: Jira Task Manager",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger: Every 5 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Get New Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Get New Messages": {
+      "main": [
+        [
+          {
+            "node": "Gateway: Ignore Empty Polls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Natural Language Interpreter": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agent: Jira Task Manager",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser: Clean AI Output": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Log Activity History",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Router: Task Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router: Task Actions": {
+      "main": [
+        [
+          {
+            "node": "Jira: Create New Issue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Jira: Transition Issue Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Jira: Fetch Active Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Create New Issue": {
+      "main": [
+        [
+          {
+            "node": "Jira: Fetch Active Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Transition Issue Status": {
+      "main": [
+        [
+          {
+            "node": "Jira: Fetch Active Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Fetch Active Tasks": {
+      "main": [
+        [
+          {
+            "node": "Formatter: Telegram Message Builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatter: Telegram Message Builder": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Push Task List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Notify User (Raw Output)1": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Clear Message Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent: Jira Task Manager": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Notify User (Raw Output)1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Parser: Clean AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Log Activity History": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Clear Message Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Push Task List": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Clear Message Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gateway: Ignore Empty Polls": {
+      "main": [
+        [
+          {
+            "node": "Agent: Jira Task Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Europe/Zurich",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timeSavedPerExecution": 5
+  },
+  "versionId": "5aedcd9b-eaab-4c06-8f02-ff968f606eba",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "YOUR_INSTANCE_N8N"
+  },
+  "id": "bwUHYBHc0sJl9v1r",
+  "tags": []
+}
