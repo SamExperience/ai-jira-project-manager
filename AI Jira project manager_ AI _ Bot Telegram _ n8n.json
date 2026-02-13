@@ -3,85 +3,33 @@
   "nodes": [
     {
       "parameters": {
-        "sessionIdType": "customKey",
-        "sessionKey": "sessione-stage-v1"
-      },
-      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
-      "typeVersion": 1.3,
-      "position": [
-        400,
-        -992
-      ],
-      "id": "1c3d912e-992f-423a-9289-8cf900065061",
-      "name": "Simple Memory"
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "seconds",
-              "secondsInterval": 5
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.3,
-      "position": [
-        -208,
-        -1232
-      ],
-      "id": "441dd935-120b-407c-b084-456f16a342f4",
-      "name": "Trigger: Every 5 Seconds"
-    },
-    {
-      "parameters": {
-        "url": "=https://api.telegram.org/YOUR_TELEGRAM_TOKEN",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        16,
-        -1232
-      ],
-      "id": "ddb80e50-8fa7-4de2-a02c-a2c005c902de",
-      "name": "Telegram: Get New Messages"
-    },
-    {
-      "parameters": {
         "options": {
           "temperature": 0.1
         }
       },
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
-      "position": [
-        224,
-        -976
-      ],
-      "id": "856ae56b-ff98-46ed-a740-0ea36df94948",
+      "position": [-2464, 1184],
+      "id": "ad39ad1b-788c-4f42-892b-180a002e3aaf",
       "name": "AI: Natural Language Interpreter",
       "credentials": {
         "googlePalmApi": {
-          "id": "4agUUxgfUzDXqOxK",
+          "id": "YOUR_GEMINI_CREDENTIAL_ID",
           "name": "Google Gemini(PaLM) Api account"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const text = $json.output;\nconst match = text.match(/\\{[\\s\\S]*\\}/);\n\nif (match) {\n  try {\n    const data = JSON.parse(match[0]);\n    return {\n      action: data.action,\n      payload: data.payload\n    };\n  } catch (e) {\n    return { action: \"CLARIFY\", payload: { text: \"Errore nel parsing JSON dell'AI.\" } };\n  }\n}\nreturn { action: \"CLARIFY\", payload: { text: \"Nessun comando riconosciuto.\" } };"
+        "jsCode": "// === AI Response Parser ===\n// Validates and normalizes the JSON output from the Gemini AI agent\n\nconst ALLOWED_ACTIONS = [\"CREATE\", \"UPDATE_STATUS\", \"UPDATE_CONTENT\", \"LIST\", \"CLARIFY\"];\nconst ALLOWED_STATUSES = [\"To Do\", \"In Progress\", \"Done\"];\n\nconst clarify = (message = \"⚠️ Invalid AI response. Please retry.\") => ({\n  action: \"CLARIFY\",\n  payload: { text: message },\n  detected_language: \"en\"\n});\n\nif (!$json?.output || typeof $json.output !== \"string\") {\n  return clarify(\"⚠️ Invalid AI response (empty). Please retry.\");\n}\n\nlet text = $json.output.trim();\ntext = text.replace(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/gi, \"$1\").trim();\n\n// Locate the first complete JSON object in the response\nconst firstBrace = text.indexOf(\"{\");\nconst lastBrace = text.lastIndexOf(\"}\");\n\nif (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {\n  return clarify();\n}\n\nconst jsonString = text.slice(firstBrace, lastBrace + 1);\n\ntry {\n  const data = JSON.parse(jsonString);\n\n  // Validate top-level structure\n  if (!data || typeof data !== \"object\" || !data.action) {\n    throw new Error(\"Missing required 'action' field\");\n  }\n\n  // Normalize action to uppercase for consistent routing\n  const action = String(data.action).trim().toUpperCase();\n\n  if (!ALLOWED_ACTIONS.includes(action)) {\n    throw new Error(`Unsupported action '${data.action}'`);\n  }\n\n  const payload = data.payload ?? {};\n  const detectedLanguage = data.detected_language ?? \"en\";\n\n  // === CREATE: requires a non-empty summary ===\n  if (action === \"CREATE\") {\n    if (!payload.summary || typeof payload.summary !== \"string\" || !payload.summary.trim()) {\n      throw new Error(\"CREATE requires non-empty 'summary'\");\n    }\n\n    return {\n      action,\n      payload: {\n        summary: payload.summary.trim(),\n        description: payload.description ?? \"\",\n        issue_id: null,\n        new_status: null,\n        transition_id: null\n      },\n      detected_language: detectedLanguage\n    };\n  }\n\n  // === UPDATE_STATUS: requires valid issue key and normalized status ===\n  if (action === \"UPDATE_STATUS\") {\n    const issueKeyPattern = /^[A-Z]+-\\d+$/;\n\n    if (!payload.issue_id || !issueKeyPattern.test(payload.issue_id)) {\n      throw new Error(\"Invalid or missing 'issue_id'\");\n    }\n\n    if (!payload.new_status || !ALLOWED_STATUSES.includes(payload.new_status)) {\n      throw new Error(\"Invalid or missing 'new_status'\");\n    }\n\n    return {\n      action,\n      payload: {\n        summary: null,\n        description: null,\n        issue_id: payload.issue_id,\n        new_status: payload.new_status,\n        transition_id: payload.transition_id ?? null\n      },\n      detected_language: detectedLanguage\n    };\n  }\n\n  // === UPDATE_CONTENT: requires valid issue key and at least summary or description ===\n  if (action === \"UPDATE_CONTENT\") {\n    const issueKeyPattern = /^[A-Z]+-\\d+$/;\n\n    if (!payload.issue_id || !issueKeyPattern.test(payload.issue_id)) {\n      throw new Error(\"Invalid or missing 'issue_id'\");\n    }\n\n    const hasSummary = payload.summary && typeof payload.summary === \"string\" && payload.summary.trim();\n    const hasDescription = payload.description && typeof payload.description === \"string\" && payload.description.trim();\n\n    if (!hasSummary && !hasDescription) {\n      throw new Error(\"UPDATE_CONTENT requires at least 'summary' or 'description'\");\n    }\n\n    return {\n      action,\n      payload: {\n        summary: hasSummary ? payload.summary.trim() : null,\n        description: hasDescription ? payload.description.trim() : null,\n        issue_id: payload.issue_id,\n        new_status: null,\n        transition_id: null\n      },\n      detected_language: detectedLanguage\n    };\n  }\n\n  // === LIST: no payload required, passes through ===\n  if (action === \"LIST\") {\n    return {\n      action,\n      payload: {},\n      detected_language: detectedLanguage\n    };\n  }\n\n  // === CLARIFY: forwards AI clarification question to the user ===\n  return {\n    action: \"CLARIFY\",\n    payload: { text: payload.clarification ?? \"⚠️ Please clarify your request.\" },\n    detected_language: detectedLanguage\n  };\n\n} catch (error) {\n  // Catch JSON parse errors or validation failures, fallback to CLARIFY\n  return clarify(`❌ Parsing error: ${error.message}`);\n}\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        640,
-        -1456
-      ],
-      "id": "b2a6326e-69f3-4b60-b38e-07c2548ffc39",
-      "name": "Parser: Clean AI Output"
+      "position": [-2064, 976],
+      "id": "7744fa21-776d-440b-96ac-a98513616bd2",
+      "name": "Parser: Clean AI Output",
+      "continueOnFail": true,
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -97,7 +45,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "{{ $json.action }}",
+                    "leftValue": "={{ $json.action }}",
                     "rightValue": "CREATE",
                     "operator": {
                       "type": "string",
@@ -107,7 +55,9 @@
                   }
                 ],
                 "combinator": "and"
-              }
+              },
+              "renameOutput": true,
+              "outputKey": "CREATE"
             },
             {
               "conditions": {
@@ -124,13 +74,38 @@
                     "rightValue": "UPDATE_STATUS",
                     "operator": {
                       "type": "string",
-                      "operation": "equals",
-                      "name": "filter.operator.equals"
+                      "operation": "equals"
                     }
                   }
                 ],
                 "combinator": "and"
-              }
+              },
+              "renameOutput": true,
+              "outputKey": "UPDATE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "UPDATE_CONTENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "UPDATE_CONTENT"
             },
             {
               "conditions": {
@@ -147,13 +122,38 @@
                     "rightValue": "LIST",
                     "operator": {
                       "type": "string",
-                      "operation": "equals",
-                      "name": "filter.operator.equals"
+                      "operation": "equals"
                     }
                   }
                 ],
                 "combinator": "and"
-              }
+              },
+              "renameOutput": true,
+              "outputKey": "LIST"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "fd33742f-5fd6-46d0-b01e-e5e63d122e61",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "CLARIFY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CLARIFY"
             }
           ]
         },
@@ -161,11 +161,8 @@
       },
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
-      "position": [
-        800,
-        -1744
-      ],
-      "id": "ba9868be-3cb0-4431-9d53-2688a74b367e",
+      "position": [-1840, 848],
+      "id": "b8dc6ba8-a8ad-46d5-a310-8ca450ae88c0",
       "name": "Router: Task Actions"
     },
     {
@@ -182,71 +179,63 @@
           "mode": "list",
           "cachedResultName": "Task"
         },
-        "summary": "={{ $json.payload.summary }}",
+        "summary": "={{ $('Parser: Clean AI Output').item.json.payload.summary }}",
         "additionalFields": {
-          "description": "={{ $json.payload.description }}"
+          "description": "={{ $('Parser: Clean AI Output').item.json.payload.description }}"
         }
       },
       "type": "n8n-nodes-base.jira",
       "typeVersion": 1,
-      "position": [
-        976,
-        -1888
-      ],
-      "id": "ae5f2007-dc2b-4fcd-a323-fbc6c3c09c6e",
+      "position": [-944, 592],
+      "id": "58e1ced6-15b1-43a2-abcb-7c410de8b26d",
       "name": "Jira: Create New Issue",
       "credentials": {
         "jiraSoftwareCloudApi": {
-          "id": "gxsHGpRO1L3vfMHk",
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
           "name": "Jira SW Cloud account"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
         "operation": "transitions",
-        "issueKey": "={{ $json.payload.issue_id }}",
+        "issueKey": "={{ $json.issue_id }}",
         "additionalFields": {
-          "transitionId": "={{ $json.payload.new_status }}"
+          "transitionId": "={{ $json.transition_id }}"
         }
       },
       "type": "n8n-nodes-base.jira",
       "typeVersion": 1,
-      "position": [
-        976,
-        -1584
-      ],
-      "id": "b594651e-9bb9-4626-9d0d-6583941d6130",
+      "position": [-1168, 784],
+      "id": "aaadd46d-79e1-4780-916f-8273543c693e",
       "name": "Jira: Transition Issue Status",
       "credentials": {
         "jiraSoftwareCloudApi": {
-          "id": "gxsHGpRO1L3vfMHk",
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
           "name": "Jira SW Cloud account"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
-        "operation": "getAll",
-        "returnAll": true,
-        "options": {
-          "jql": "=project = \"YOUR_PROJECT_NAME\" AND assignee = currentUser() AND status != Done ORDER BY status ASC"
-        }
+        "operation": "get",
+        "issueKey": "={{ $('Parser: Clean AI Output').item.json.payload.issue_id }}",
+        "additionalFields": {}
       },
       "type": "n8n-nodes-base.jira",
       "typeVersion": 1,
-      "position": [
-        1152,
-        -1696
-      ],
-      "id": "8b9929b0-ed08-42ed-96f4-649fd2a17be8",
-      "name": "Jira: Fetch Active Tasks",
+      "position": [-944, 784],
+      "id": "cb921dd7-94a5-4116-a85e-9feba1bd0907",
+      "name": "Jira: Get Updated Issue",
       "credentials": {
         "jiraSoftwareCloudApi": {
-          "id": "gxsHGpRO1L3vfMHk",
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
           "name": "Jira SW Cloud account"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -254,32 +243,34 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "YOUR_SHEET_ID",
+          "value": "YOUR_GOOGLE_SHEET_ID",
           "mode": "list",
-          "cachedResultName": "Test Task AI",
-          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit?usp=drivesdk"
+          "cachedResultName": "YOUR_SHEET_NAME",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
           "value": "gid=0",
           "mode": "list",
-          "cachedResultName": "Foglio1",
-          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit#gid=0"
+          "cachedResultName": "YOUR_TAB_NAME",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
         },
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "Date": "={{ $now.format('dd/MM/yyyy HH:mm') }}",
-            "Action": "={{ $json.action }}",
-            "Title": "={{ $json.payload.summary || $json.payload.issue_id }}",
-            "Description": "={{ $json.payload.description || 'N/A' }}",
-            "Status": "={{ $json.payload.new_status || 'N/A' }}"
+            "Timestamp": "={{ $now.setZone('Europe/Rome').toFormat('dd/MM/yyyy HH:mm') }}",
+            "Action": "={{ $('Feedback: Format Message').item.json.action }}",
+            "Task_ID": "={{ $('Feedback: Format Message').item.json.key }}",
+            "Title_EN": "={{ $('Feedback: Format Message').item.json.fields.summary }}",
+            "Description_EN": "={{ $('Feedback: Format Message').item.json.fields.description || 'N/A' }}",
+            "Status": "={{ $('Feedback: Format Message').item.json.fields.status.name }}",
+            "Input_Language": "={{ $('Feedback: Format Message').item.json.detected_language }}"
           },
           "matchingColumns": [],
           "schema": [
             {
-              "id": "Date",
-              "displayName": "Date",
+              "id": "Timestamp",
+              "displayName": "Timestamp",
               "required": false,
               "defaultMatch": false,
               "display": true,
@@ -294,12 +285,11 @@
               "defaultMatch": false,
               "display": true,
               "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
+              "canBeUsedToMatch": true
             },
             {
-              "id": "Title",
-              "displayName": "Title",
+              "id": "Task_ID",
+              "displayName": "Task_ID",
               "required": false,
               "defaultMatch": false,
               "display": true,
@@ -308,8 +298,18 @@
               "removed": false
             },
             {
-              "id": "Description",
-              "displayName": "Description",
+              "id": "Title_EN",
+              "displayName": "Title_EN",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Description_EN",
+              "displayName": "Description_EN",
               "required": false,
               "defaultMatch": false,
               "display": true,
@@ -320,6 +320,15 @@
             {
               "id": "Status",
               "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Input_Language",
+              "displayName": "Input_Language",
               "required": false,
               "defaultMatch": false,
               "display": true,
@@ -335,77 +344,44 @@
       },
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.7,
-      "position": [
-        976,
-        -1296
-      ],
-      "id": "a683ff8b-fd32-4040-824e-24127e720611",
+      "position": [-272, 624],
+      "id": "30efc318-7a89-463a-b2fb-f90dbf9a7f5b",
       "name": "Sheets: Log Activity History",
       "credentials": {
         "googleApi": {
-          "id": "NZ0IEaGr5zDnAWn6",
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
           "name": "Google Sheets account"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "const issues = items; \nlet todo = \"\";\nlet wip = \"\";\n\n// Controlliamo se la lista dei task è vuota\nif (!issues || issues.length === 0) {\n  return { \n    message: \"📭 **Nessun task trovato!**\\n\\nNon ci sono task assegnati a tuo nome al momento. Ottimo lavoro, sei in pari con tutto! ✨\" \n  };\n}\n\nissues.forEach(item => {\n  const task = item.json;\n  const summary = task.fields.summary;\n  const id = task.key;\n  const status = task.fields.status.name;\n\n  const line = `• ${summary}. ID: ${id}\\n`;\n  \n  if (status === \"To Do\") todo += line;\n  else if (status === \"In Progress\") wip += line;\n});\n\n// Messaggio finale se ci sono task\nconst finalMessage = `🚀 **PROJECT TASK LIST**\\n\\n` +\n                     `📝 **TO DO:**\\n${todo || \"_Nessun task in attesa_\"}\\n\\n` +\n                     `🚧 **IN PROGRESS:**\\n${wip || \"_Nessun lavoro in corso_\"}`;\n\nreturn { message: finalMessage };"
+        "jsCode": "// === Task Dashboard Formatter ===\n// Formats Jira issues into a multilingual MarkdownV2 dashboard for Telegram\n\n// Retrieve all incoming Jira issues\nconst issues = items;\n\n// Detect user language from AI parser output, default to English\nconst lang = $('Parser: Clean AI Output').item.json.detected_language || \"en\";\n\n// Escape reserved MarkdownV2 characters to prevent Telegram parsing errors\nconst esc = (s) => {\n  if (typeof s !== 'string') return '';\n  return s.replace(/([_*\\[\\]()~>#+\\-=|{}.!\\\\])/g, '\\\\$1');\n};\n\n// Localized UI labels for each supported language\nconst headers = {\n  it: {\n    title: \"🚀 *DASHBOARD TASK*\",\n    todo: \"📝 *DA FARE:*\",\n    wip: \"🚧 *IN CORSO:*\",\n    done: \"✅ *COMPLETATI \\\\(ultimi 7gg\\\\):*\",\n    empty: \"📭 *Nessun task trovato\\\\!*\\n\\nSei in pari con tutto\\\\! ✨\",\n    none: \"_Nessuno_\"\n  },\n  fr: {\n    title: \"🚀 *TABLEAU DE BORD*\",\n    todo: \"📝 *À FAIRE:*\",\n    wip: \"🚧 *EN COURS:*\",\n    done: \"✅ *TERMINÉS \\\\(7 derniers jours\\\\):*\",\n    empty: \"📭 *Aucune tâche trouvée\\\\!*\\n\\nTout est à jour\\\\! ✨\",\n    none: \"_Aucune_\"\n  },\n  de: {\n    title: \"🚀 *TASK\\\\-DASHBOARD*\",\n    todo: \"📝 *ZU TUN:*\",\n    wip: \"🚧 *IN ARBEIT:*\",\n    done: \"✅ *ERLEDIGT \\\\(letzte 7 Tage\\\\):*\",\n    empty: \"📭 *Keine Aufgaben gefunden\\\\!*\\n\\nAlles erledigt\\\\! ✨\",\n    none: \"_Keine_\"\n  },\n  en: {\n    title: \"🚀 *TASK DASHBOARD*\",\n    todo: \"📝 *TO DO:*\",\n    wip: \"🚧 *IN PROGRESS:*\",\n    done: \"✅ *DONE \\\\(last 7 days\\\\):*\",\n    empty: \"📭 *No tasks found\\\\!*\\n\\nYou're all caught up\\\\! ✨\",\n    none: \"_None_\"\n  }\n};\n\n// Select header set based on detected language, fallback to English\nconst h = headers[lang] || headers.en;\n\n// Extract Telegram chat ID for the reply\nconst chatId = $('Telegram Trigger').item.json.message.from.id;\n\n// Accumulators for each task category\nlet todo = \"\";\nlet wip = \"\";\nlet done = \"\";\n\n// Normalize Unicode for consistent matching\nconst normStatus = (s) => typeof s === 'string' ? s.toLowerCase().trim().normalize('NFC') : '';\n\n// Map normalized status names to dashboard categories\nconst statusAliasMap = {\n  todo: ['to do', 'open', 'da fare', 'à faire', 'a faire', 'zu tun', 'aperto', 'ouvert', 'backlog'],\n  wip: ['in progress', 'wip', 'in corso', 'en cours', 'in arbeit', 'in lavorazione'],\n  done: ['done', 'terminée', 'terminee', 'terminé', 'termine', 'fatto', 'completato', 'fertig', 'closed', 'chiuso', 'résolu', 'resolved']\n};\n\n// Classify a status name into a dashboard category\nconst classifyStatus = (name) => {\n  const n = normStatus(name);\n  for (const [cat, aliases] of Object.entries(statusAliasMap)) {\n    if (aliases.map(normStatus).includes(n)) return cat;\n  }\n  return 'todo';\n};\n\n// Categorize each Jira issue into the appropriate section\nissues.forEach(item => {\n  const task = item.json;\n  const summary = task?.fields?.summary;\n  const id = task?.key;\n  const status = task?.fields?.status?.name;\n\n  // Skip malformed issues missing required fields\n  if (!summary || !id || !status) return;\n\n  // Format line with escaped content for MarkdownV2\n  const line = `• ${esc(summary)} \\\\(${esc(id)}\\\\)\\n`;\n  const category = classifyStatus(status);\n\n  if (category === \"todo\") todo += line;\n  else if (category === \"wip\") wip += line;\n  else if (category === \"done\") done += line;\n});\n\n// Assemble final MarkdownV2 message with all sections\nconst finalMessage =\n  `${h.title}\\n\\n` +\n  `${h.todo}\\n${todo || h.none}\\n\\n` +\n  `${h.wip}\\n${wip || h.none}\\n\\n` +\n  `${h.done}\\n${done || h.none}`;\n\n// Return formatted message and chat ID for Telegram node\nreturn {\n  message: finalMessage,\n  chat_id: chatId\n};"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1328,
-        -1696
-      ],
-      "id": "5ea54058-6bc6-4968-9b76-019e4f697e68",
-      "name": "Formatter: Telegram Message Builder"
+      "position": [-48, 896],
+      "id": "641da810-3efe-42e9-8ee5-ba32561a263a",
+      "name": "Formatter: Task Dashboard"
     },
     {
       "parameters": {
-        "chatId": "={{ $('Telegram: Get New Messages').item.json.result[0].message.from.id }}",
-        "text": "=🛠 **AI Debug:** Il comando è stato elaborato come: {{ $json.output }}",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        976,
-        -976
-      ],
-      "id": "c0b4cd68-d341-4d61-8c40-a379a146d422",
-      "name": "Telegram: Notify User (Raw Output)1",
-      "webhookId": "f668d863-ff8b-4f06-ab82-b4e2d6860e69",
-      "credentials": {
-        "telegramApi": {
-          "id": "WfnkKuestKlyqoYH",
-          "name": "Telegram account"
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "MarkdownV2"
         }
       },
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $('Telegram: Get New Messages').item.json.result[0].message.from.id }}",
-        "text": "={{ $json.message }}",
-        "replyMarkup": "=none",
-        "forceReply": {},
-        "replyKeyboardOptions": {},
-        "replyKeyboardRemove": {},
-        "additionalFields": {}
-      },
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [
-        1504,
-        -1392
-      ],
-      "id": "6e632667-5e97-4ce4-affd-9998e573bf7a",
-      "name": "Telegram: Push Task List",
-      "webhookId": "0e0c52e7-59af-4c27-b6be-b61904c713cd",
+      "position": [176, 896],
+      "id": "e0d18914-97ac-4241-9a1d-878a4ebeeb22",
+      "name": "Telegram: Push Task Dashboard",
+      "webhookId": "YOUR_WEBHOOK_ID_DASHBOARD",
       "credentials": {
         "telegramApi": {
-          "id": "WfnkKuestKlyqoYH",
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
           "name": "Telegram account"
         }
       }
@@ -413,33 +389,17 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ $node[\"Telegram: Get New Messages\"].json.result[0].message.text }}",
+        "text": "={{ $('Telegram Trigger').item.json.message.text }}",
         "options": {
-          "systemMessage": "### ROLE\nSei un Senior Project Assistant AI specializzato nella gestione di Jira Cloud per il progetto \"YOUR_PROJECT_NAME\". Il tuo compito è tradurre input in linguaggio naturale (Italiano) in comandi tecnici strutturati (Inglese).\n\n### TRANSLATION RULES\n- INPUT: Italiano (informale o tecnico).\n- OUTPUT FIELDS (summary, description): DEVI tradurli in Inglese tecnico, professionale e conciso.\n- OUTPUT FORMAT: Restituisci SEMPRE e SOLO un oggetto JSON valido. Niente testo prima o dopo.\n\n### LOGIC & MAPPING\n1. @crea: [testo] -> action: CREATE. Traduci [testo] in 'summary' (titolo) e 'description' (dettagli).\n2. @aggiorna: [ID]: [stato] -> action: UPDATE_STATUS. Mappa gli stati:\n   - \"da fare\" / \"todo\" -> \"To Do\"\n   - \"in corso\" / \"lavorando\" -> \"In Progress\"\n   - \"concluso\" / \"fatto\" -> \"Done\"\n3. @lista -> action: LIST.\n\n### SELF-CORRECTION STEP (Verifica prima di rispondere)\nPrima di generare il JSON, esegui mentalmente questo controllo:\n- Il testo è stato tradotto correttamente in inglese?\n- Lo stato (se presente) corrisponde esattamente a \"To Do\", \"In Progress\" o \"Done\"?\n- Il JSON è ben formato (virgolette, virgole, parentesi)?\n- Se mancano dati critici, imposta action: \"CLARIFY\".\n\n### JSON STRUCTURE\n{\n  \"action\": \"CREATE | UPDATE_STATUS | LIST | CLARIFY\",\n  \"payload\": {\n    \"summary\": \"English title\",\n    \"description\": \"English detailed description\",\n    \"issue_id\": \"CORE-XXX\",\n    \"new_status\": \"To Do | In Progress | Done\"\n  }\n}"
+          "systemMessage": "#ROLE\n\nYou are a Senior Project Management AI Assistant for Jira Cloud.\nYou interpret natural language commands in Italian, French, German, or English.\nAll Jira fields (summary, description, status) MUST be written in professional English.\n\n#OBJECTIVE\n\nDetect user intent and return a strictly valid JSON response.\n\nAllowed actions:\n\nCREATE\n\nUPDATE_STATUS\n\nUPDATE_CONTENT\n\nLIST\n\nCLARIFY\n\nIf the command is incomplete, ambiguous, or missing required data, use CLARIFY.\n\n#INTENT RULES\n\nCREATE\nUser wants to create a new task and provides a description.\n\nUPDATE_STATUS\nUser provides:\n\nA valid issue key matching pattern: [A-Z]+-\\d+\n\nA target status\n\nUPDATE_CONTENT\nUser wants to modify the title and/or description of an existing task.\nUser provides:\n\nA valid issue key matching pattern: [A-Z]+-\\d+\n\nAt least one of: new title (summary) or new description.\n\nIf the user provides both, update both fields.\nIf only one is provided, set the other to null.\nIf the user says to fully replace or rewrite the task, provide both summary and description.\n\nLIST\nUser requests a list or overview of tasks.\n\nIf required elements are missing → CLARIFY.\n\n#STATUS NORMALIZATION\n\nMap any detected language to exactly one of:\n\n\"To Do\"\n\n\"In Progress\"\n\n\"Done\"\n\nNever output localized or alternative status names.\n\n#LANGUAGE RULES\n\nAuto-detect input language (it | fr | de | en).\n\nTranslate summary and description into concise professional English.\n\nKeep technical terms unchanged (API, webhook, React, Jira, etc.).\n\nDo not invent missing information.\n\n#FIELD RULES\n\nFor action CREATE:\n\nsummary: short, clear title (max 10 words).\n\ndescription: structured professional description derived from user input.\n\nissue_id: null\n\nnew_status: null\n\ntransition_id: null\n\nclarification: null\n\nFor action UPDATE_STATUS:\n\nsummary: null\n\ndescription: null\n\nissue_id: valid issue key\n\nnew_status: normalized value\n\ntransition_id: null\n\nclarification: null\n\nFor action UPDATE_CONTENT:\n\nsummary: new title string | null (null if not changing title)\n\ndescription: new description string | null (null if not changing description)\n\nissue_id: valid issue key (required)\n\nnew_status: null\n\ntransition_id: null\n\nclarification: null\n\nFor action LIST:\n\npayload must contain all fields set to null.\n\nFor action CLARIFY:\n\nsummary: null\n\ndescription: null\n\nissue_id: null\n\nnew_status: null\n\ntransition_id: null\n\nclarification: short question written in detected language.\n\n#OUTPUT FORMAT (STRICT)\n\n{\n\"action\": \"CREATE | UPDATE_STATUS | UPDATE_CONTENT | LIST | CLARIFY\",\n\"payload\": {\n\"summary\": string | null,\n\"description\": string | null,\n\"issue_id\": string | null,\n\"new_status\": \"To Do | In Progress | Done\" | null,\n\"transition_id\": number | null,\n\"clarification\": string | null\n},\n\"detected_language\": \"it|fr|de|en\"\n}\n\n#HARD CONSTRAINTS\n\nOutput ONLY valid JSON.\n\nNo explanations.\n\nNo markdown.\n\nNo backticks.\n\nDo not omit fields.\n\nDo not add extra fields."
         }
       },
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
-      "position": [
-        352,
-        -1232
-      ],
-      "id": "15f87809-dbfe-41fd-a960-72b918bc3fcc",
-      "name": "Agent: Jira Task Manager"
-    },
-    {
-      "parameters": {
-        "url": "=https://api.telegram.org/YOUR_TELEGRAM_TOKEN/getUpdates?offset={{ $('Telegram: Get New Messages').item.json.result[0].update_id + 1 }}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        1712,
-        -1136
-      ],
-      "id": "770d91cc-cf91-4db8-ae57-e645919d6e73",
-      "name": "Telegram: Clear Message Queue"
+      "position": [-2416, 976],
+      "id": "4534d743-8da3-4652-ac02-407e5242d26b",
+      "name": "Agent: Jira Task Manager",
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -452,12 +412,13 @@
           },
           "conditions": [
             {
-              "id": "0f385ab3-0a2d-4406-b649-cbd5316cda91",
-              "leftValue": "={{ $json.result.length }}",
-              "rightValue": 0,
+              "id": "72ab7eb1-91b9-4711-9280-7b1ea4f282c8",
+              "leftValue": "={{ $('Telegram Trigger').item.json.message?.text || $('Telegram Trigger').item.json.text }}",
+              "rightValue": "",
               "operator": {
-                "type": "number",
-                "operation": "gt"
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
               }
             }
           ],
@@ -467,49 +428,427 @@
       },
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2.3,
-      "position": [
-        192,
-        -1232
-      ],
-      "id": "733e78d6-28de-481b-a537-c8e52a9d9836",
-      "name": "Gateway: Ignore Empty Polls"
+      "position": [-2640, 976],
+      "id": "afb96335-7501-470e-93a8-0fe2c1795826",
+      "name": "Filter: Has Message Text"
+    },
+    {
+      "parameters": {
+        "updates": ["message"],
+        "limit": 1,
+        "timeout": 0
+      },
+      "type": "n8n-nodes-telegram-polling.telegramPollingTrigger",
+      "typeVersion": 1,
+      "position": [-3088, 976],
+      "id": "0da0f124-fff4-4a9d-b494-e5794cfd73f1",
+      "name": "Telegram Trigger",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Feedback Message Formatter ===\n// Builds a localized MarkdownV2 confirmation message after CREATE or UPDATE_STATUS\n\n// Retrieve language and action type from AI parser output\nconst lang = $('Parser: Clean AI Output').item.json.detected_language || \"en\";\nconst action = $('Parser: Clean AI Output').item.json.action;\n\n// Extract Jira issue data from the upstream Jira node output\nconst taskKey = $json.key;\nconst summary = $json.fields?.summary || '';\nconst status = $json.fields?.status?.name || 'To Do';\n\n// Escape reserved MarkdownV2 characters to prevent Telegram parsing errors\nconst esc = (s) => {\n  if (typeof s !== 'string') return '';\n  return s.replace(/([_*\\[\\]()~>#+\\-=|{}.!\\\\])/g, '\\\\$1');\n};\n\n// Localized confirmation messages per action type\nconst messages = {\n  CREATE: {\n    it: `✅ Task creato\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`,\n    fr: `✅ Tâche créée\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`,\n    de: `✅ Aufgabe erstellt\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`,\n    en: `✅ Task created\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`\n  },\n  UPDATE_STATUS: {\n    it: `✅ Stato aggiornato\\\\!\\n\\n📌 *${esc(taskKey)}* → ${esc(status)}`,\n    fr: `✅ Statut mis à jour\\\\!\\n\\n📌 *${esc(taskKey)}* → ${esc(status)}`,\n    de: `✅ Status aktualisiert\\\\!\\n\\n📌 *${esc(taskKey)}* → ${esc(status)}`,\n    en: `✅ Status updated\\\\!\\n\\n📌 *${esc(taskKey)}* → ${esc(status)}`\n  },\n  UPDATE_CONTENT: {\n    it: `✏️ Task aggiornato\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`,\n    fr: `✏️ Tâche mise à jour\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`,\n    de: `✏️ Aufgabe aktualisiert\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`,\n    en: `✏️ Task updated\\\\!\\n\\n📝 *${esc(taskKey)}*\\n${esc(summary)}`\n  }\n};\n\n// Select message by action and language, fallback to English then generic\nconst message = messages[action]?.[lang] || messages[action]?.[\"en\"] || \"✅ Operation completed\\\\!\";\n\n// Return formatted payload for Telegram and downstream nodes (Sheets, Dashboard)\nreturn {\n  message: message,\n  chat_id: $('Telegram Trigger').item.json.message.from.id,\n  action: action,\n  detected_language: lang,\n  key: taskKey,\n  fields: $json.fields\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-720, 672],
+      "id": "b83f338b-ceb6-44d4-9422-4b22387b87dc",
+      "name": "Feedback: Format Message"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "MarkdownV2"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-496, 672],
+      "id": "7bf9c88b-9052-454d-a6ff-e6ca01e97eeb",
+      "name": "Telegram: Send Feedback",
+      "webhookId": "YOUR_WEBHOOK_ID_FEEDBACK",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendChatAction",
+        "chatId": "={{ $json.message.from.id }}"
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-2864, 976],
+      "id": "2c89cd2c-a300-4f1e-bd44-ad34f3e677ff",
+      "name": "Telegram: Send Chat Action",
+      "webhookId": "YOUR_WEBHOOK_ID_CHAT_ACTION",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// === CLARIFY Message Formatter ===\n// Sends a help/clarification message when the user's intent is unclear\n\n// Retrieve detected language from parser output\nconst lang = $json.detected_language || 'en';\n\n// Get AI-generated clarification text (if any)\nconst clarifyText = $json.payload?.text || '';\n\n// Escape reserved MarkdownV2 characters for dynamic content\nconst esc = (s) => {\n  if (typeof s !== 'string') return s;\n  return s.replace(/([_*\\[\\]()~>#+\\-=|{}.!\\\\])/g, '\\\\$1');\n};\n\n// If AI provided a specific clarification, escape and send it\nif (clarifyText) {\n  return {\n    message: esc(clarifyText),\n    chat_id: $('Telegram Trigger').item.json.message.from.id\n  };\n}\n\n// Default help messages with pre-formatted MarkdownV2 syntax\n// Note: special chars are manually escaped, formatting markers are preserved\nconst defaultMessages = {\n  it: \"❓ *Comando non riconosciuto*\\n\\nNon ho capito la tua richiesta\\\\. Prova con:\\n• `crea task [descrizione]`\\n• `aggiorna [ID] a [stato]`\\n• `modifica titolo [ID] in [nuovo titolo]`\\n• `lista task`\",\n  fr: \"❓ *Commande non reconnue*\\n\\nJe n'ai pas compris votre demande\\\\. Essayez:\\n• `créer tâche [description]`\\n• `mettre à jour [ID] à [statut]`\\n• `modifier titre [ID] en [nouveau titre]`\\n• `liste tâches`\",\n  de: \"❓ *Befehl nicht erkannt*\\n\\nIch habe Ihre Anfrage nicht verstanden\\\\. Versuchen Sie:\\n• `erstelle aufgabe [beschreibung]`\\n• `aktualisiere [ID] auf [status]`\\n• `ändere titel [ID] zu [neuer titel]`\\n• `liste aufgaben`\",\n  en: \"❓ *Command not recognized*\\n\\nI didn't understand your request\\\\. Try:\\n• `create task [description]`\\n• `update [ID] to [status]`\\n• `edit title [ID] to [new title]`\\n• `list tasks`\"\n};\n\n// Select message by language, fallback to English\nreturn {\n  message: defaultMessages[lang] || defaultMessages.en,\n  chat_id: $('Telegram Trigger').item.json.message.from.id\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1648, 1136],
+      "id": "69e63f56-9dac-49c6-ac17-222383f73397",
+      "name": "Formatter: CLARIFY Message"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "MarkdownV2"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-1424, 1136],
+      "id": "a3dd8e20-6970-4e2b-9d49-cde245ccea7f",
+      "name": "Telegram: Send CLARIFY Message",
+      "webhookId": "YOUR_WEBHOOK_ID_CLARIFY",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "fields": "summary,status,assignee,description,created,updated,issuetype,priority",
+          "jql": "project = YOUR_PROJECT_KEY AND assignee = currentUser() ORDER BY updated DESC"
+        }
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [-272, 896],
+      "id": "af8eebdc-aa1f-4190-8ce1-efe9b562a239",
+      "name": "Jira: Fetch My Tasks",
+      "alwaysOutputData": true,
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=https://YOUR_DOMAIN.atlassian.net/rest/api/2/issue/{{ $json.payload.issue_id }}/transitions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-1616, 784],
+      "id": "6ca9afa3-ff1d-466c-a8b0-e18ca26737b4",
+      "name": "Get Available Transitions",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Transition ID Resolver ===\n// Maps the desired status name to a valid Jira transition ID\n// Supports localized names, Unicode normalization, and linear workflows\n\nconst transitions = $json.transitions || [];\nconst targetStatus = $('Parser: Clean AI Output').item.json.payload.new_status;\nconst issueId = $('Parser: Clean AI Output').item.json.payload.issue_id;\n\n// Normalize Unicode + lowercase for consistent comparison\nconst norm = (s) => typeof s === 'string' ? s.toLowerCase().trim().normalize('NFC') : '';\n\n// Localized status aliases\nconst statusAliases = {\n  'To Do': ['to do', 'à faire', 'a faire', 'da fare', 'zu tun', 'open', 'aperto', 'ouvert', 'backlog'],\n  'In Progress': ['in progress', 'in corso', 'en cours', 'in arbeit', 'wip', 'in lavorazione'],\n  'Done': ['done', 'terminée', 'terminee', 'terminé', 'termine', 'fatto', 'completato', 'fertig', 'closed', 'chiuso', 'résolu', 'resolved']\n};\n\n// State ordering for linear workflow navigation\nconst stateOrder = { 'To Do': 0, 'In Progress': 1, 'Done': 2 };\n\n// Classify a Jira status name to a normalized state\nconst classify = (name) => {\n  const n = norm(name);\n  for (const [state, aliases] of Object.entries(statusAliases)) {\n    if (aliases.map(norm).includes(n)) return state;\n  }\n  return null;\n};\n\n// Get target aliases\nconst targetAliases = (statusAliases[targetStatus] || [norm(targetStatus)]).map(norm);\n\n// 1. Try direct match to target (with Unicode normalization)\nlet match = transitions.find(t => {\n  if (!t.to || !t.to.name) return false;\n  return targetAliases.includes(norm(t.to.name));\n});\n\n// 2. If no direct match, find best intermediate step toward the target\nif (!match && stateOrder[targetStatus] !== undefined) {\n  const targetOrder = stateOrder[targetStatus];\n  let bestMatch = null;\n  let bestDist = Infinity;\n  for (const t of transitions) {\n    if (!t.to || !t.to.name) continue;\n    const state = classify(t.to.name);\n    if (state && stateOrder[state] !== undefined) {\n      const dist = Math.abs(targetOrder - stateOrder[state]);\n      if (dist > 0 && dist < bestDist) {\n        bestDist = dist;\n        bestMatch = t;\n      }\n    }\n  }\n  if (bestMatch) match = bestMatch;\n}\n\nif (!match) {\n  const available = transitions.map(t => t.to?.name).join(', ');\n  throw new Error(`No transition found toward \"${targetStatus}\". Available: ${available}`);\n}\n\nreturn {\n  issue_id: issueId,\n  transition_id: match.id,\n  new_status: match.to.name,\n  target_status: targetStatus\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1392, 784],
+      "id": "8e7853ac-5500-4009-8ded-d71810220be9",
+      "name": "Find Transition ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "// === UPDATE_CONTENT: Build Jira update payload ===\n// Constructs the fields object for the Jira REST API PUT request\n\nconst issueId = $json.payload.issue_id;\nconst summary = $json.payload.summary;\nconst description = $json.payload.description;\n\nconst fields = {};\nif (summary) fields.summary = summary;\nif (description) fields.description = description;\n\nreturn {\n  issue_id: issueId,\n  update_fields: fields\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1616, 480],
+      "id": "c1d2e3f4-a5b6-7890-cdef-123456789abc",
+      "name": "Prepare: Update Content Payload"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://YOUR_DOMAIN.atlassian.net/rest/api/2/issue/{{ $json.issue_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: $json.update_fields }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-1392, 480],
+      "id": "d2e3f4a5-b6c7-8901-def0-23456789abcd",
+      "name": "Jira: Update Issue Content",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "issueKey": "={{ $('Parser: Clean AI Output').item.json.payload.issue_id }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [-1168, 480],
+      "id": "e3f4a5b6-c7d8-9012-ef01-3456789abcde",
+      "name": "Jira: Get Content Updated Issue",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "https://YOUR_DOMAIN.atlassian.net/rest/api/2/myself",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-1168, 592],
+      "id": "f4a5b6c7-d8e9-0123-f012-456789abcdef",
+      "name": "Jira: Get My Account",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://YOUR_DOMAIN.atlassian.net/rest/api/2/issue/{{ $('Parser: Clean AI Output').item.json.payload.issue_id }}/transitions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-944, 960],
+      "id": "aa11bb22-cc33-dd44-ee55-ff6677889900",
+      "name": "Get Transitions Round 2",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Resolve Final Transition ===\n// After first transition, check if we need a second one to reach the target\n\nconst transitions = $json.transitions || [];\nconst targetStatus = $('Find Transition ID').item.json.target_status;\nconst issueId = $('Parser: Clean AI Output').item.json.payload.issue_id;\n\nconst norm = (s) => typeof s === 'string' ? s.toLowerCase().trim().normalize('NFC') : '';\n\nconst statusAliases = {\n  'To Do': ['to do', 'à faire', 'a faire', 'da fare', 'zu tun', 'open', 'aperto', 'ouvert', 'backlog'],\n  'In Progress': ['in progress', 'in corso', 'en cours', 'in arbeit', 'wip', 'in lavorazione'],\n  'Done': ['done', 'terminée', 'terminee', 'terminé', 'termine', 'fatto', 'completato', 'fertig', 'closed', 'chiuso', 'résolu', 'resolved']\n};\n\nconst targetAliases = (statusAliases[targetStatus] || [norm(targetStatus)]).map(norm);\n\nconst match = transitions.find(t => {\n  if (!t.to || !t.to.name) return false;\n  return targetAliases.includes(norm(t.to.name));\n});\n\nreturn {\n  issue_id: issueId,\n  transition_id: match ? match.id : null,\n  needs_second: !!match,\n  target_status: targetStatus\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-720, 960],
+      "id": "bb22cc33-dd44-ee55-ff66-778899001122",
+      "name": "Resolve Final Transition"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "check-needs-second-transition",
+              "leftValue": "={{ $json.needs_second }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-496, 960],
+      "id": "cc33dd44-ee55-ff66-7788-990011223344",
+      "name": "Need Second Transition?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://YOUR_DOMAIN.atlassian.net/rest/api/2/issue/{{ $json.issue_id }}/transitions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ transition: { id: String($json.transition_id) } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-272, 920],
+      "id": "dd44ee55-ff66-7788-9900-112233445566",
+      "name": "Jira: Execute Second Transition",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://YOUR_DOMAIN.atlassian.net/rest/api/2/issue/{{ $json.key }}/assignee",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ accountId: $('Jira: Get My Account').item.json.accountId }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-720, 592],
+      "id": "ee55ff66-7788-9900-aabb-ccddeeff0011",
+      "name": "Jira: Assign To Me",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "issueKey": "={{ $('Jira: Create New Issue').item.json.key }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [-496, 592],
+      "id": "ff66aa77-8899-0011-bbcc-ddeeff223344",
+      "name": "Jira: Get Created Issue",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "YOUR_JIRA_CREDENTIAL_ID",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "continueOnFail": true
     }
   ],
   "pinData": {},
   "connections": {
-    "Simple Memory": {
-      "ai_memory": [
-        [
-          {
-            "node": "Agent: Jira Task Manager",
-            "type": "ai_memory",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Trigger: Every 5 Seconds": {
-      "main": [
-        [
-          {
-            "node": "Telegram: Get New Messages",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Telegram: Get New Messages": {
-      "main": [
-        [
-          {
-            "node": "Gateway: Ignore Empty Polls",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "AI: Natural Language Interpreter": {
       "ai_languageModel": [
         [
@@ -525,12 +864,14 @@
       "main": [
         [
           {
-            "node": "Sheets: Log Activity History",
+            "node": "Router: Task Actions",
             "type": "main",
             "index": 0
-          },
+          }
+        ],
+        [
           {
-            "node": "Router: Task Actions",
+            "node": "Formatter: CLARIFY Message",
             "type": "main",
             "index": 0
           }
@@ -541,21 +882,35 @@
       "main": [
         [
           {
-            "node": "Jira: Create New Issue",
+            "node": "Jira: Get My Account",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Jira: Transition Issue Status",
+            "node": "Get Available Transitions",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Jira: Fetch Active Tasks",
+            "node": "Prepare: Update Content Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Jira: Fetch My Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Formatter: CLARIFY Message",
             "type": "main",
             "index": 0
           }
@@ -566,7 +921,29 @@
       "main": [
         [
           {
-            "node": "Jira: Fetch Active Tasks",
+            "node": "Jira: Assign To Me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Assign To Me": {
+      "main": [
+        [
+          {
+            "node": "Jira: Get Created Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Get Created Issue": {
+      "main": [
+        [
+          {
+            "node": "Feedback: Format Message",
             "type": "main",
             "index": 0
           }
@@ -577,40 +954,80 @@
       "main": [
         [
           {
-            "node": "Jira: Fetch Active Tasks",
+            "node": "Get Transitions Round 2",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Jira: Fetch Active Tasks": {
+    "Get Transitions Round 2": {
       "main": [
         [
           {
-            "node": "Formatter: Telegram Message Builder",
+            "node": "Resolve Final Transition",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Formatter: Telegram Message Builder": {
+    "Resolve Final Transition": {
       "main": [
         [
           {
-            "node": "Telegram: Push Task List",
+            "node": "Need Second Transition?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Telegram: Notify User (Raw Output)1": {
+    "Need Second Transition?": {
       "main": [
         [
           {
-            "node": "Telegram: Clear Message Queue",
+            "node": "Jira: Execute Second Transition",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Jira: Get Updated Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Execute Second Transition": {
+      "main": [
+        [
+          {
+            "node": "Jira: Get Updated Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Get Updated Issue": {
+      "main": [
+        [
+          {
+            "node": "Feedback: Format Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatter: Task Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Push Task Dashboard",
             "type": "main",
             "index": 0
           }
@@ -621,11 +1038,6 @@
       "main": [
         [
           {
-            "node": "Telegram: Notify User (Raw Output)1",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Parser: Clean AI Output",
             "type": "main",
             "index": 0
@@ -633,33 +1045,148 @@
         ]
       ]
     },
-    "Sheets: Log Activity History": {
-      "main": [
-        [
-          {
-            "node": "Telegram: Clear Message Queue",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Telegram: Push Task List": {
-      "main": [
-        [
-          {
-            "node": "Telegram: Clear Message Queue",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Gateway: Ignore Empty Polls": {
+    "Filter: Has Message Text": {
       "main": [
         [
           {
             "node": "Agent: Jira Task Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Chat Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Chat Action": {
+      "main": [
+        [
+          {
+            "node": "Filter: Has Message Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feedback: Format Message": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Feedback": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Log Activity History",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Jira: Fetch My Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatter: CLARIFY Message": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send CLARIFY Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Fetch My Tasks": {
+      "main": [
+        [
+          {
+            "node": "Formatter: Task Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Available Transitions": {
+      "main": [
+        [
+          {
+            "node": "Find Transition ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Transition ID": {
+      "main": [
+        [
+          {
+            "node": "Jira: Transition Issue Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare: Update Content Payload": {
+      "main": [
+        [
+          {
+            "node": "Jira: Update Issue Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Update Issue Content": {
+      "main": [
+        [
+          {
+            "node": "Jira: Get Content Updated Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Get Content Updated Issue": {
+      "main": [
+        [
+          {
+            "node": "Feedback: Format Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Get My Account": {
+      "main": [
+        [
+          {
+            "node": "Jira: Create New Issue",
             "type": "main",
             "index": 0
           }
@@ -671,19 +1198,13 @@
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
-    "availableInMCP": false,
-    "timeSavedMode": "fixed",
-    "timezone": "Europe/Zurich",
-    "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "all",
-    "callerPolicy": "workflowsFromSameOwner",
-    "timeSavedPerExecution": 5
+    "availableInMCP": false
   },
-  "versionId": "5aedcd9b-eaab-4c06-8f02-ff968f606eba",
+  "versionId": "YOUR_VERSION_ID",
   "meta": {
     "templateCredsSetupCompleted": true,
-    "instanceId": "YOUR_INSTANCE_N8N"
+    "instanceId": "YOUR_N8N_INSTANCE_ID"
   },
-  "id": "bwUHYBHc0sJl9v1r",
+  "id": "YOUR_WORKFLOW_ID",
   "tags": []
 }
